@@ -15,8 +15,8 @@ type Opts struct {
 	NotifyDirectoriesOnStartup bool
 }
 
-func WatchRecursive(path string, opts Opts) (<-chan notify.EventInfo, error) {
-	pathEvents := make(chan notify.EventInfo, 100)
+func WatchRecursive(path string, opts Opts) (<-chan *EventInfo, error) {
+	pathEvents := make(chan *EventInfo, 100)
 	rawPathEvents := make(chan notify.EventInfo, 1000)
 	err := notify.Watch(filepath.Join(path, "..."), rawPathEvents, notify.All)
 	if err != nil {
@@ -24,7 +24,7 @@ func WatchRecursive(path string, opts Opts) (<-chan notify.EventInfo, error) {
 	}
 	go run(opts, rawPathEvents, pathEvents)
 	if opts.NotifyDirectoriesOnStartup {
-		go walkDirTree(path, rawPathEvents)
+		go walkDirTree(path, pathEvents)
 	}
 	return pathEvents, nil
 }
@@ -34,14 +34,14 @@ type eventKey struct {
 	path  string
 }
 
-func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan notify.EventInfo) {
+func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan *EventInfo) {
 	timerElapsed := false
 	timer := time.NewTimer(1e6 * time.Hour)
-	events := map[eventKey]*eventInfo{}
+	events := map[eventKey]*EventInfo{}
 	for {
-		var sendPathEvents chan<- notify.EventInfo
+		var sendPathEvents chan<- *EventInfo
 		var sendPathEventKey eventKey
-		var sendPathEvent notify.EventInfo
+		var sendPathEvent *EventInfo
 		if timerElapsed && len(events) > 0 {
 			sendPathEvents = pathEvents
 			for key, ev := range events {
@@ -61,13 +61,13 @@ func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan notify.
 			}
 			ev, ok := events[key]
 			if !ok {
-				ev = &eventInfo{
-					event: event,
-					path:  path,
+				ev = &EventInfo{
+					Event: event,
+					Path:  path,
 				}
 				events[key] = ev
 			} else if opts.CoalesceEventTypes {
-				ev.event |= event
+				ev.Event |= event
 			}
 			// reset timer
 			if timerElapsed {
@@ -84,12 +84,12 @@ func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan notify.
 	}
 }
 
-func walkDirTree(path string, rawPathEvents chan<- notify.EventInfo) {
+func walkDirTree(path string, pathEvents chan<- *EventInfo) {
 	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
 		if info.IsDir() {
-			rawPathEvents <- &eventInfo{
-				event: notify.Write,
-				path:  path,
+			pathEvents <- &EventInfo{
+				Event: notify.Write,
+				Path:  path,
 			}
 			return nil
 		}
@@ -100,19 +100,7 @@ func walkDirTree(path string, rawPathEvents chan<- notify.EventInfo) {
 	}
 }
 
-type eventInfo struct {
-	event notify.Event
-	path  string
-}
-
-func (e *eventInfo) Event() notify.Event {
-	return e.event
-}
-
-func (e *eventInfo) Path() string {
-	return e.path
-}
-
-func (e *eventInfo) Sys() interface{} {
-	return nil
+type EventInfo struct {
+	Event notify.Event
+	Path  string
 }
