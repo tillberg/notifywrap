@@ -3,6 +3,7 @@ package notifywrap
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rjeczalik/notify"
@@ -13,6 +14,7 @@ type Opts struct {
 	DebounceDuration           time.Duration
 	CoalesceEventTypes         bool
 	NotifyDirectoriesOnStartup bool
+	NotifyFilesOnStartup       bool
 }
 
 func WatchRecursive(path string, opts Opts) (<-chan *EventInfo, error) {
@@ -23,8 +25,12 @@ func WatchRecursive(path string, opts Opts) (<-chan *EventInfo, error) {
 		return nil, err
 	}
 	go run(opts, rawPathEvents, pathEvents)
-	if opts.NotifyDirectoriesOnStartup {
-		go walkDirTree(path, pathEvents)
+	if opts.NotifyDirectoriesOnStartup || opts.NotifyFilesOnStartup {
+		rootPath := path
+		if !strings.HasSuffix(rootPath, "/") {
+			rootPath += "/"
+		}
+		go walkDirTree(rootPath, pathEvents, opts.NotifyFilesOnStartup)
 	}
 	return pathEvents, nil
 }
@@ -84,9 +90,9 @@ func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan *EventI
 	}
 }
 
-func walkDirTree(path string, pathEvents chan<- *EventInfo) {
+func walkDirTree(path string, pathEvents chan<- *EventInfo, notifyFiles bool) {
 	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
+		if notifyFiles || info.IsDir() {
 			pathEvents <- &EventInfo{
 				Event: notify.Write,
 				Path:  path,
