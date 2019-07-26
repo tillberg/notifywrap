@@ -3,30 +3,35 @@ package notifywrap
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rjeczalik/notify"
 )
 
 type Opts struct {
-	Path                       string
 	DebounceDuration           time.Duration
 	CoalesceEventTypes         bool
 	NotifyDirectoriesOnStartup bool
+	NotifyFilesOnStartup       bool
 }
 
-func WatchRecursive(path string, opts Opts) (<-chan *EventInfo, error) {
-	pathEvents := make(chan *EventInfo, 100)
-	rawPathEvents := make(chan notify.EventInfo, 1000)
+func WatchRecursive(path string, pathEvents chan<- *EventInfo, opts Opts) error {
+	// alog.Println("hi")
+	rawPathEvents := make(chan notify.EventInfo, 100)
 	err := notify.Watch(filepath.Join(path, "..."), rawPathEvents, notify.All)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	go run(opts, rawPathEvents, pathEvents)
-	if opts.NotifyDirectoriesOnStartup {
-		go walkDirTree(path, pathEvents)
+	if opts.NotifyDirectoriesOnStartup || opts.NotifyFilesOnStartup {
+		rootPath := path
+		if !strings.HasSuffix(rootPath, "/") {
+			rootPath += "/"
+		}
+		go walkDirTree(rootPath, pathEvents, opts.NotifyFilesOnStartup)
 	}
-	return pathEvents, nil
+	return nil
 }
 
 type eventKey struct {
@@ -34,7 +39,7 @@ type eventKey struct {
 	path  string
 }
 
-func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan *EventInfo) {
+func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan<- *EventInfo) {
 	timerElapsed := false
 	timer := time.NewTimer(1e6 * time.Hour)
 	events := map[eventKey]*EventInfo{}
@@ -84,9 +89,10 @@ func run(opts Opts, rawPathEvents chan notify.EventInfo, pathEvents chan *EventI
 	}
 }
 
-func walkDirTree(path string, pathEvents chan<- *EventInfo) {
+func walkDirTree(path string, pathEvents chan<- *EventInfo, notifyFiles bool) {
 	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if info.IsDir() {
+		// alog.Println("walkDirTree", path, info.IsDir())
+		if notifyFiles || info.IsDir() {
 			pathEvents <- &EventInfo{
 				Event: notify.Write,
 				Path:  path,
