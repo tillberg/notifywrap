@@ -3,6 +3,7 @@ package notifywrap
 import (
 	"bufio"
 	"bytes"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,12 +21,17 @@ type Opts struct {
 	CoalesceEventTypes         bool
 	NotifyDirectoriesOnStartup bool
 	NotifyFilesOnStartup       bool
+	DisableRecursion           bool
 }
 
-func WatchRecursive(path string, pathEvents chan<- *EventInfo, opts Opts) error {
+func Watch(path string, pathEvents chan<- *EventInfo, opts Opts) error {
 	// alog.Println("hi")
 	rawPathEvents := make(chan notify.EventInfo, 100)
-	err := notify.Watch(filepath.Join(path, "..."), rawPathEvents, notify.All)
+	watchPath := filepath.Join(path, "...")
+	if opts.DisableRecursion {
+		watchPath = path
+	}
+	err := notify.Watch(watchPath, rawPathEvents, notify.All)
 	if err != nil {
 		return err
 	}
@@ -36,6 +42,20 @@ func WatchRecursive(path string, pathEvents chan<- *EventInfo, opts Opts) error 
 			rootPath += "/"
 		}
 		go func() {
+			if opts.DisableRecursion {
+				fis, err := ioutil.ReadDir(rootPath)
+				if err != nil {
+					alog.Printf("@(warn:ioutil.ReadDir returned error for %q: %v)\n", rootPath, err)
+					return
+				}
+				for _, fi := range fis {
+					pathEvents <- &EventInfo{
+						Event: notify.Write,
+						Path:  filepath.Join(rootPath, fi.Name()),
+					}
+				}
+				return
+			}
 			err := walkDirTree(rootPath, opts, pathEvents)
 			if err != nil {
 				alog.Printf("@(warn:notifywrap.walkDirTree returned error for %q: %v)\n", rootPath, err)
